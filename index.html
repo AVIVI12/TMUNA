@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AI Image Studio</title>
+<title>AI Image Generator</title>
 <script src="https://cdn.tailwindcss.com"></script>
 
 <style>
@@ -25,80 +25,56 @@
 <body class="bg-gray-900 text-white min-h-screen flex flex-col">
 
 <div class="p-4 bg-gray-800 flex gap-2">
-    <input id="apiKey" type="password" placeholder="Replicate API Token"
-        class="flex-1 p-2 rounded bg-gray-700">
-    <button onclick="saveKey()" class="bg-green-600 px-4 rounded">שמור</button>
+    <input id="prompt" class="flex-1 p-2 rounded bg-gray-700"
+        placeholder="תאר תמונה..." />
+    <button onclick="generateImage()" class="bg-purple-600 px-4 rounded">
+        צור
+    </button>
 </div>
 
-<div class="flex-1 flex flex-col p-4 gap-4 max-w-3xl mx-auto w-full">
+<div class="flex flex-col items-center gap-4 p-4">
 
-    <h1 class="text-2xl font-bold text-center">🎨 מחולל תמונות AI</h1>
+    <div id="loader" class="hidden loader"></div>
 
-    <textarea id="prompt" rows="3"
-        class="p-3 rounded bg-gray-800 w-full"
-        placeholder="תאר תמונה..."></textarea>
-
-    <button onclick="generateImage()"
-        class="bg-purple-600 p-3 rounded">
-        צור תמונה
-    </button>
-
-    <div id="loader" class="hidden loader mx-auto"></div>
-
-    <img id="result" class="rounded-lg mx-auto max-h-[500px]" />
+    <img id="result" class="rounded-lg max-h-[500px] shadow-lg" />
 
 </div>
 
 <script>
 
-let API_KEY = localStorage.getItem("replicate_api") || "";
-document.getElementById("apiKey").value = API_KEY;
-
-function saveKey(){
-    API_KEY = document.getElementById("apiKey").value.trim();
-    localStorage.setItem("replicate_api", API_KEY);
-    alert("נשמר");
-}
-
-function toggleLoader(show){
-    document.getElementById("loader").classList.toggle("hidden", !show);
-}
+const WORKER_URL = "https://winter-bonus-9667.yecielashual.workers.dev";
 
 function sleep(ms){
     return new Promise(r => setTimeout(r, ms));
 }
 
-let activeRequest = null;
+let currentId = null;
 
 async function generateImage(){
 
-    if(activeRequest) activeRequest.cancel = true;
-    const req = { cancel:false };
-    activeRequest = req;
-
-    const img = document.getElementById("result");
-    img.src = "";
-
     const prompt = document.getElementById("prompt").value.trim();
+    const img = document.getElementById("result");
+
     if(!prompt){
         alert("כתוב תיאור");
         return;
     }
 
-    toggleLoader(true);
+    img.src = "";
+    document.getElementById("loader").classList.remove("hidden");
 
     try {
 
-        const res = await fetch("https://winter-bonus-9667.yecielashual.workers.dev", {
+        // 1. יצירה
+        const res = await fetch(WORKER_URL, {
             method: "POST",
             headers: {
-                "Authorization": "Token " + API_KEY,
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({
                 version: "39ed52f2a78e934c5e8c7a6d3b5a793b4c5c6d2e5c1b3b3e6c8c4f5c6d7e8f9a",
                 input: {
-                    prompt,
+                    prompt: prompt,
                     width: 1024,
                     height: 1024
                 }
@@ -107,47 +83,38 @@ async function generateImage(){
 
         const data = await res.json();
 
-        if(!res.ok) throw new Error(data.detail || "שגיאה");
+        if(!data.id){
+            throw new Error("לא התקבל ID מהשרת");
+        }
 
-        const url = data.urls?.get;
-        if(!url) throw new Error("אין URL");
+        currentId = data.id;
 
+        // 2. polling
         let status = data.status;
-        let tries = 0;
 
         while(status !== "succeeded" && status !== "failed"){
 
-            if(req.cancel) return;
+            await sleep(2000);
 
-            if(tries++ > 40){
-                throw new Error("Timeout");
-            }
+            const check = await fetch(`${WORKER_URL}/status?id=${currentId}`);
 
-            await sleep(1500);
-
-            const check = await fetch(url, {
-                headers: {
-                    "Authorization": "Token " + API_KEY
-                }
-            });
-
-            const checkData = await check.json();
-            status = checkData.status;
+            const result = await check.json();
+            status = result.status;
 
             if(status === "succeeded"){
-                img.src = checkData.output?.[0] || "";
+                img.src = result.output?.[0] || "";
             }
 
             if(status === "failed"){
-                throw new Error("נכשל");
+                throw new Error("יצירת תמונה נכשלה");
             }
         }
 
-    } catch(e){
-        alert("❌ " + e.message);
+    } catch (err){
+        alert("❌ " + err.message);
     }
 
-    toggleLoader(false);
+    document.getElementById("loader").classList.add("hidden");
 }
 
 </script>
