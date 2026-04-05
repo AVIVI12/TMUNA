@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Image Studio</title>
+<script src="https://cdn.tailwindcss.com"></script>
+
+<style>
+.loader {
+  border: 4px solid #444;
+  border-top: 4px solid #fff;
+  border-radius: 50%;
+  width: 34px;
+  height: 34px;
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+</style>
+</head>
+
+<body class="bg-gray-900 text-white min-h-screen flex flex-col">
+
+<div class="p-4 bg-gray-800 flex gap-2">
+    <input id="apiKey" type="password" placeholder="Replicate API Token"
+        class="flex-1 p-2 rounded bg-gray-700">
+    <button onclick="saveKey()" class="bg-green-600 px-4 rounded">שמור</button>
+</div>
+
+<div class="flex-1 flex flex-col p-4 gap-4 max-w-3xl mx-auto w-full">
+
+    <h1 class="text-2xl font-bold text-center">🎨 מחולל תמונות AI</h1>
+
+    <textarea id="prompt" rows="3"
+        class="p-3 rounded bg-gray-800 w-full"
+        placeholder="תאר תמונה..."></textarea>
+
+    <button onclick="generateImage()"
+        class="bg-purple-600 p-3 rounded">
+        צור תמונה
+    </button>
+
+    <div id="loader" class="hidden loader mx-auto"></div>
+
+    <img id="result" class="rounded-lg mx-auto max-h-[500px]" />
+
+</div>
+
+<script>
+
+let API_KEY = localStorage.getItem("replicate_api") || "";
+document.getElementById("apiKey").value = API_KEY;
+
+function saveKey(){
+    API_KEY = document.getElementById("apiKey").value.trim();
+    localStorage.setItem("replicate_api", API_KEY);
+    alert("נשמר");
+}
+
+function toggleLoader(show){
+    document.getElementById("loader").classList.toggle("hidden", !show);
+}
+
+function sleep(ms){
+    return new Promise(r => setTimeout(r, ms));
+}
+
+let activeRequest = null;
+
+async function generateImage(){
+
+    if(activeRequest) activeRequest.cancel = true;
+    const req = { cancel:false };
+    activeRequest = req;
+
+    const img = document.getElementById("result");
+    img.src = "";
+
+    const prompt = document.getElementById("prompt").value.trim();
+    if(!prompt){
+        alert("כתוב תיאור");
+        return;
+    }
+
+    toggleLoader(true);
+
+    try {
+
+        const res = await fetch("https://api.replicate.com/v1/predictions", {
+            method: "POST",
+            headers: {
+                "Authorization": "Token " + API_KEY,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                version: "39ed52f2a78e934c5e8c7a6d3b5a793b4c5c6d2e5c1b3b3e6c8c4f5c6d7e8f9a",
+                input: {
+                    prompt,
+                    width: 1024,
+                    height: 1024
+                }
+            })
+        });
+
+        const data = await res.json();
+
+        if(!res.ok) throw new Error(data.detail || "שגיאה");
+
+        const url = data.urls?.get;
+        if(!url) throw new Error("אין URL");
+
+        let status = data.status;
+        let tries = 0;
+
+        while(status !== "succeeded" && status !== "failed"){
+
+            if(req.cancel) return;
+
+            if(tries++ > 40){
+                throw new Error("Timeout");
+            }
+
+            await sleep(1500);
+
+            const check = await fetch(url, {
+                headers: {
+                    "Authorization": "Token " + API_KEY
+                }
+            });
+
+            const checkData = await check.json();
+            status = checkData.status;
+
+            if(status === "succeeded"){
+                img.src = checkData.output?.[0] || "";
+            }
+
+            if(status === "failed"){
+                throw new Error("נכשל");
+            }
+        }
+
+    } catch(e){
+        alert("❌ " + e.message);
+    }
+
+    toggleLoader(false);
+}
+
+</script>
+
+</body>
+</html>
